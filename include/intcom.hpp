@@ -28,12 +28,16 @@ public:
 
     // commit to x with randomness r from [0,r_range)
     Com commit(const NTL::ZZ& x, const long r_range) const;
+    // open the commitment by revealing x and r, return true if the commitment can be recomputed from the opening
     bool open(const std::string& c_x, const NTL::ZZ& x, const NTL::ZZ& r) const;
+    // get upper bound on the group order (in bits)
     long U() const { return U_; }
-    long commitment_bitlength(const std::string& c_x) const;
+    // get the bit length of the commitment   
+    long commitment_bitlength(const std::string& c_x) const;  
+    // compute commitment to x with randomness y  
     std::string commit_elem(const NTL::ZZ& x, const NTL::ZZ& y) const;
-    std::string pow(const std::string& a, const NTL::ZZ& x) const;
-
+    // compute a^x where a is a group element serialized as a string  
+    std::string pow(const std::string& a, const NTL::ZZ& x) const;  
 private:
     long U_; // the bit length upper bound of the group order
     GEN delta_;

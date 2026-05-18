@@ -1,9 +1,0 @@
-# ninja log v5
-0	382	1776473999728678724	CMakeFiles/test.dir/src/class_group.cpp.o	f1c94cfc2a1a7578
-2	468	1776670760878820894	CMakeFiles/test.dir/src/test.cpp.o	b36a6721af5061fb
-1	420	1776507407171064687	CMakeFiles/test.dir/src/hash.cpp.o	3e559c514bdaaa8
-1	451	1776473999797709582	CMakeFiles/test.dir/src/Hash.cpp.o	a2379ff0654b553b
-0	614	1776473999959746889	CMakeFiles/test.dir/src/VSS.cpp.o	589829cb4a3e2d09
-468	546	1776670760955413328	test	fd02eccdc0eeda78
-1	352	1776565694129824753	CMakeFiles/test.dir/src/intcom.cpp.o	17e06e77f3f26ccb
-1	619	1776664201989054058	CMakeFiles/test.dir/src/vwss.cpp.o	e2d94f811e8b5ab9

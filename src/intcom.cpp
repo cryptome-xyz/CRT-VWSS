@@ -16,9 +16,6 @@ IntCom::IntCom() {
 
     U_ = 1600/2 + 20; // Hard code upper bound of the group order since Delta is 1600 bits.
 
-    
-    
-    
     pari_sp av = avma;
     
     delta_ = gclone(strtoi(const_cast<char*>(DELTA_STR)));
@@ -32,7 +29,6 @@ IntCom::~IntCom() {
     gunclone(delta_);
     gunclone(g_);
     gunclone(h_);
-    // pari_close();
 }
 
 IntCom::Com IntCom::commit(const NTL::ZZ& x, const long r_range) const {
@@ -46,9 +42,9 @@ IntCom::Com IntCom::commit(const NTL::ZZ& x, const long r_range) const {
     GEN x_gen = zzToGEN(x);
     GEN r_gen = zzToGEN(r);
 
-    GEN gx = gpow(g_, x_gen, 0);
-    GEN hr = gpow(h_, r_gen, 0);
-    GEN c_x = gmul(gx, hr);
+    GEN gx = gpow(g_, x_gen, 0);    // g^x
+    GEN hr = gpow(h_, r_gen, 0);    // h^r
+    GEN c_x = gmul(gx, hr); // c_x = g^x * h^r
 
     Com com;
     com.c_x = serializeForm(c_x);
@@ -67,9 +63,9 @@ bool IntCom::open(const std::string& c_x, const NTL::ZZ& x, const NTL::ZZ& r) co
         GEN x_gen = zzToGEN(x);
         GEN r_gen = zzToGEN(r);
 
-        GEN gx = gpow(g_, x_gen, 0);
-        GEN hr = gpow(h_, r_gen, 0);
-        GEN c_recomputed = gmul(gx, hr);
+        GEN gx = gpow(g_, x_gen, 0);    // g^x
+        GEN hr = gpow(h_, r_gen, 0);    // h^r
+        GEN c_recomputed = gmul(gx, hr); // c_recomputed = g^x * h^r
 
         bool ok = gequal(c_claimed, c_recomputed);
 

@@ -1,1 +1,0 @@
-/usr/bin/g++ -g CMakeFiles/test.dir/src/test.cpp.o CMakeFiles/test.dir/src/VSS.cpp.o CMakeFiles/test.dir/src/class_group.cpp.o CMakeFiles/test.dir/src/Hash.cpp.o -o test  -lntl -lpari -lssl -lcrypto 
