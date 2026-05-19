@@ -42,6 +42,19 @@ struct Party {
         std::vector<Party> B; // Set B of parties not in A 
     };
 
+    struct RangeProof {
+        NTL::ZZ z_1;
+        NTL::ZZ z_2;
+        NTL::ZZ z_3;
+        NTL::ZZ t_1;
+        NTL::ZZ t_2;
+        NTL::ZZ t_3;
+        std::string c1;
+        std::string c2;
+        std::string c3;
+        NTL::ZZ tau;
+    };
+
     struct Broadcast {
         // depending on whether A contains weight < lambda, 
         // if so, then ck, Rk, Rrk are defined
@@ -56,7 +69,7 @@ struct Party {
         NTL::ZZ Rrv;
         hash::Hash rt;
         hash::Hash gamma;
-        // VSS::RngPrf RP;
+        VWSS::RangeProof RP;
     };
 
     struct MSG_A {
@@ -104,7 +117,7 @@ struct Party {
     // const Broadcast& get_broadcast() const;
 
     void share() const;
-    void verify(const Broadcast& broadcast) const;
+    void verify_broadcast(const Broadcast& broadcast) const;
 
 private:
     // system parameters

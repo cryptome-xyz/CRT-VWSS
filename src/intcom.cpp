@@ -101,10 +101,6 @@ std::string IntCom::commit_elem(const NTL::ZZ& x, const NTL::ZZ& y) const {
 }
 
 std::string IntCom::pow(const std::string& a, const NTL::ZZ& e) const {
-    //if (e < 0) {
-        //return pow(inv(a), -e);
-    //}
-
     pari_sp av = avma;
     GEN a_gen = deserializeForm(a);
     GEN e_gen = zzToGEN(e);

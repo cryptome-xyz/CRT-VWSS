@@ -193,8 +193,7 @@ MerkleTree::MerkleTree(const std::vector<Hash>& leaves) {
 
         for (size_t i = 0; i < current.size(); i += 2) {
             const Hash& left = current[i];
-            const Hash& right =
-                (i + 1 < current.size()) ? current[i + 1] : current[i];
+            const Hash& right = (i + 1 < current.size()) ? current[i + 1] : current[i];
 
             next.push_back(hashCombine(left, right));
         }

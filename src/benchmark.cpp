@@ -1,9 +1,11 @@
 #include "vwss.hpp"
 #include <iostream>
 #include <random>
+#include "three_square.hpp"
 
 int main() {
-    // initialize PARI with 128 MB stack and 2 preallocated GENs
+    /*
+            // initialize PARI with 128 MB stack and 2 preallocated GENs
     pari_init(128 * 1024 * 1024, 2);
     
     VWSS::Params params;
@@ -42,10 +44,9 @@ int main() {
         total_weights += i;
     }
     std::cout << "Total Weights: " <<total_weights << std::endl;
-    params.T = total_weights / 2;
-    //params.T = 4878;
+    params.T = total_weights / 2;  // reconstruction threshold is set to half of total weights
     std::cout << "Reconstruction Threshold: " <<params.T << std::endl;
-    params.t = params.T - 2 * params.lambda;
+    params.t = params.T - 3 * params.lambda;    // privacy threshold t
     params.L = params.t + params.lambda;
 
     VWSS vwss;
@@ -53,6 +54,22 @@ int main() {
     vwss.share();
 
     pari_close();
+    */
+
+    NTL::ZZ n = NTL::power2_ZZ(18000) * 4 + 1;
+    std::vector<NTL::ZZ> decompose(3);
+    auto start = std::chrono::high_resolution_clock::now();
+    three_square::decompose(n, decompose);
+    auto end = std::chrono::high_resolution_clock::now();
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+    std::cout << "Time taken for three-square decomposition: " << elapsed.count() << " ms\n";
+
+    if (three_square::verify(n, decompose)) {
+        std::cout << "Decomposition successful!" << std::endl;
+        std::cout << "x: " << decompose[0] << ", y: " << decompose[1] << ", z: " << decompose[2] << std::endl;
+    } else {
+        std::cout << "Decomposition failed!" << std::endl;
+    }
 
 
     return 0;

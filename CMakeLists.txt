@@ -9,6 +9,7 @@ add_executable(test
     src/hash.cpp
     src/intcom.cpp
     src/vwss.cpp
+    src/three_square.cpp
 )
 
 target_include_directories(test

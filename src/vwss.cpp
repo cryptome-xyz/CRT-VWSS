@@ -231,9 +231,9 @@ void VWSS::share() const {
 }
 
 
-void VWSS::verify(const Broadcast& broadcast) const {
+void VWSS::verify_broadcast(const Broadcast& broadcast) const {
     auto start = std::chrono::high_resolution_clock::now();
-
+    
 
 
     auto end = std::chrono::high_resolution_clock::now();
