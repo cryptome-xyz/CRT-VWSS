@@ -2,7 +2,7 @@
 
 #include <openssl/sha.h>
 #include <NTL/ZZ.h>
-
+#include <cstring>
 #include <stdexcept>
 
 namespace hash {
@@ -18,9 +18,11 @@ void appendRaw(std::vector<unsigned char>& out,
 
 // 8-byte big-endian length prefix
 void appendUint64(std::vector<unsigned char>& out, uint64_t x) {
-    for (int i = 7; i >= 0; --i) {
-        out.push_back(static_cast<unsigned char>((x >> (8 * i)) & 0xff));
+    unsigned char buf[8];
+    for (int i = 0; i < 8; ++i) {
+        buf[i] = static_cast<unsigned char>(x >> (8 * (7 - i)));
     }
+    out.insert(out.end(), buf, buf + 8);
 }
 
 void appendStringEncoded(std::vector<unsigned char>& out, const std::string& s) {
@@ -53,22 +55,6 @@ void appendHashEncoded(std::vector<unsigned char>& out, const Hash& h) {
     appendUint64(out, static_cast<uint64_t>(h.size()));
     appendRaw(out, h.data(), h.size());
 }
-
-
-static Hash sha256(const std::vector<unsigned char>& data) {
-    Hash out{};
-    SHA256(data.data(), data.size(), out.data());
-    return out;
-}
-
-static std::vector<unsigned char> concatBytes(const Hash& a, const Hash& b) {
-    std::vector<unsigned char> out;
-    out.reserve(a.size() + b.size());
-    out.insert(out.end(), a.begin(), a.end());
-    out.insert(out.end(), b.begin(), b.end());
-    return out;
-}
-
 
 
 Hash hashBytes(const unsigned char* data, size_t len) {
@@ -118,21 +104,19 @@ Hash hash(const char* s) {
 
 // Domain-separated hashing for Hash itself
 Hash hash(const Hash& h) {
-    std::vector<unsigned char> bytes;
-    bytes.reserve(1 + h.size());
-    bytes.push_back(0x02); // domain tag for Hash
-    appendRaw(bytes, h.data(), h.size());
-    return hashBytes(bytes);
+    std::array<unsigned char, 1 + HASH_SIZE> buf;
+    buf[0] = 0x02; // domain tag for Hash
+    std::memcpy(buf.data() + 1, h.data(), h.size());
+    return hashBytes(buf.data(), buf.size());
 }
 
 // Combine two hashes as an internal node
 Hash hashCombine(const Hash& left, const Hash& right) {
-    std::vector<unsigned char> bytes;
-    bytes.reserve(1 + left.size() + right.size());
-    bytes.push_back(0x03); // domain tag for internal/combine
-    appendRaw(bytes, left.data(), left.size());
-    appendRaw(bytes, right.data(), right.size());
-    return hashBytes(bytes);
+    std::array<unsigned char, 1 + 2 * HASH_SIZE> buf;
+    buf[0] = 0x03; // domain tag for internal/combine
+    std::memcpy(buf.data() + 1, left.data(), left.size());
+    std::memcpy(buf.data() + 1 + left.size(), right.data(), right.size());
+    return hashBytes(buf.data(), buf.size());
 }
 
 Hash hashConcat(const std::string& s, const NTL::ZZ& z, const Hash& h) {
@@ -178,16 +162,11 @@ MerkleTree::MerkleTree(const std::vector<Hash>& leaves) {
         throw std::invalid_argument("Merkle tree requires at least one leaf");
     }
 
-    std::vector<Hash> current = leaves;
-    //current.reserve(leaves.size());
+    levels_.push_back(leaves);
 
-    //for (const auto& x : leaves) {
-        //current.push_back(hash(x));
-    //}
+    while (levels_.back().size() > 1) {
+        const std::vector<Hash>& current = levels_.back();
 
-    levels_.push_back(current);
-
-    while (current.size() > 1) {
         std::vector<Hash> next;
         next.reserve((current.size() + 1) / 2);
 
@@ -198,8 +177,7 @@ MerkleTree::MerkleTree(const std::vector<Hash>& leaves) {
             next.push_back(hashCombine(left, right));
         }
 
-        levels_.push_back(next);
-        current = next;
+        levels_.push_back(std::move(next));
     }
 }
 
@@ -236,9 +214,9 @@ AuthPath MerkleTree::authenticationPath(size_t leafIndex) const {
     return path;
 }
 
-Hash MerkleTree::verify(const ZZ& leaf,
+Hash MerkleTree::verify(const Hash& leaf,
                         const AuthPath& path) {
-    Hash current = hash(leaf);
+    Hash current = leaf;
 
     for (const auto& step : path) {
         if (step.siblingIsLeft) {

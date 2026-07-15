@@ -36,8 +36,10 @@ public:
     long commitment_bitlength(const std::string& c_x) const;  
     // compute commitment to x with randomness y  
     std::string commit_elem(const NTL::ZZ& x, const NTL::ZZ& y) const;
-    // compute a^x where a is a group element serialized as a string  
-    std::string pow(const std::string& a, const NTL::ZZ& x) const;  
+    // compute a^x where a is a group element serialized as a string
+    std::string pow(const std::string& a, const NTL::ZZ& x) const;
+    // multiply two group elements, each serialized as a string
+    std::string mul(const std::string& a, const std::string& b) const;
 private:
     long U_; // the bit length upper bound of the group order
     GEN delta_;

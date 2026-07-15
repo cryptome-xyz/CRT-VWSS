@@ -31,6 +31,7 @@ IntCom::~IntCom() {
     gunclone(h_);
 }
 
+
 IntCom::Com IntCom::commit(const NTL::ZZ& x, const long r_range) const {
     if (r_range < 0) {
         throw std::invalid_argument("r_range must be nonnegative");
@@ -55,6 +56,7 @@ IntCom::Com IntCom::commit(const NTL::ZZ& x, const long r_range) const {
     return com;
 
 }
+
 
 bool IntCom::open(const std::string& c_x, const NTL::ZZ& x, const NTL::ZZ& r) const {
         pari_sp av = avma;
@@ -94,10 +96,9 @@ std::string IntCom::commit_elem(const NTL::ZZ& x, const NTL::ZZ& y) const {
     GEN hy = gpow(h_, y_gen, 0);
     GEN c_x = gmul(gx, hy);
 
+    std::string s = serializeForm(c_x);
     avma = av;
-
-    return serializeForm(c_x);
-
+    return s;
 }
 
 std::string IntCom::pow(const std::string& a, const NTL::ZZ& e) const {
@@ -111,11 +112,25 @@ std::string IntCom::pow(const std::string& a, const NTL::ZZ& e) const {
     return s;
 }
 
+std::string IntCom::mul(const std::string& a, const std::string& b) const {
+    pari_sp av = avma;
+    GEN a_gen = deserializeForm(a);
+    GEN b_gen = deserializeForm(b);
+    GEN out = gmul(a_gen, b_gen);
+
+    std::string s = serializeForm(out);
+    avma = av;
+    return s;
+}
+
 GEN IntCom::zzToGEN(const NTL::ZZ& x) {
+    // strtoi() only parses unsigned decimal digits (it returns 0 on a leading '-'),
+    // so the sign has to be handled separately.
     std::ostringstream oss;
-    oss << x;
+    oss << NTL::abs(x);
     std::string s = oss.str();
-    return strtoi(const_cast<char*>(s.c_str()));
+    GEN g = strtoi(const_cast<char*>(s.c_str()));
+    return (x < 0) ? gneg(g) : g;
 }
 
 std::string IntCom::genToString(GEN x) {

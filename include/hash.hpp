@@ -49,13 +49,14 @@ NTL::ZZ hashToZZ128(const Hash& h);
 
 class MerkleTree {
 public:
+
     explicit MerkleTree(const std::vector<Hash>& leaves);
 
     Hash root() const;
 
     AuthPath authenticationPath(size_t leafIndex) const;
 
-    static Hash verify(const ZZ& leaf,
+    static Hash verify(const Hash& leaf,
                        const AuthPath& path);
 
 private:
