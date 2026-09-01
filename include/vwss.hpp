@@ -37,9 +37,11 @@ struct Party {
     struct Parties {
         NTL::ZZ P;  // the product of all parties' moduli
         long bit_P = 0;    // the bit length of P
+        NTL::ZZ PA; // the product of parties moduli in A
         std::vector<Party> users; // all parties in the system
         std::vector<Party> A;  // Set A of parties with weights >= T
         std::vector<Party> B; // Set B of parties not in A 
+        long total_weights_in_A;
     };
 
     struct RangeProof {
@@ -103,11 +105,17 @@ struct Party {
 
     // Constructors and destructors
     VWSS();
-    explicit VWSS(const Params& params);
+    explicit VWSS(const Params& params, bool method1);
     ~VWSS() = default;
 
     // on input a set of parameters, set up the dealer and parties
-    void setup_dealer_and_parties(const Params& params);
+    void setup_dealer_and_parties(const Params& params, bool method1);
+
+    // pre-extend IntCom's fixed-base g/h tables to cover every exponent bit length used by
+    // share()/verify_*, so their one-time table-build cost doesn't land inside a timed region.
+    // Call after setup_dealer_and_parties() and before the region you want to measure; optional,
+    // since the tables also extend lazily on first use if this is never called.
+    void warmup() const;
 
     // getters
     const Params& get_params() const;
@@ -119,6 +127,9 @@ struct Party {
     // Distribute shares and compute proof
     VWSS::Msg share() const;
    
+
+    // verify the proof of broadcast message
+    bool verify_broadcast(const Broadcast& broadcast) const;
      
     bool verify_party_in_A(const MSG_A& msg, const Broadcast& broadcast) const;
 
@@ -151,14 +162,13 @@ private:
     Params params_; // system parameters
     Dealer dealer_; // dealer
     Parties parties_;   // parties
+    IntCom intcom_; // group parameters (g, h, delta) parsed once, reused across all calls
     void setup_dealer();
-    void setup_parties();
+    void setup_parties(bool method1);
     NTL::ZZ generate_party_modulus(long bits, const std::set<NTL::ZZ>& used_primes) const;
     void build_AB_small();  // This is method 1 in the paper
     void build_AB_large();  // This is nmethod 2 in the paper
 
-    // verify the proof of broadcast message
-    bool verify_broadcast(const Broadcast& broadcast) const;
 
    
 

@@ -1,17 +1,19 @@
 #include "vwss.hpp"
+#include <chrono>
+#include <iostream>
 
 
 // Constructors
 VWSS::VWSS() = default;
 
-VWSS::VWSS(const Params& params){
-    setup_dealer_and_parties(params);
+VWSS::VWSS(const Params& params, bool method1){
+    setup_dealer_and_parties(params, method1);
 }
 
-void VWSS::setup_dealer_and_parties(const Params& params) {
+void VWSS::setup_dealer_and_parties(const Params& params, bool method1) {
     params_ = params;
     setup_dealer();
-    setup_parties();
+    setup_parties(method1);
 }
 
 void VWSS::setup_dealer() {
@@ -22,7 +24,7 @@ void VWSS::setup_dealer() {
     dealer_.lifted_secret = NTL::rep(dealer_.secret) + u * params_.p0;
 }
 
-void VWSS::setup_parties() {
+void VWSS::setup_parties(bool method1) {
     // In CRT-based SS, primes must be distinct
     std::set<NTL::ZZ> used_primes;
     // initialize the set of used primes with p0 
@@ -58,8 +60,11 @@ void VWSS::setup_parties() {
         p.global_CRT_coef = temp;
     }
 
-    //build_AB_small(); // method 1
-    build_AB_large(); // method 2
+    if (method1) {
+        build_AB_small(); // method 1
+    } else {
+        build_AB_large(); // method 2
+    }
 }
 
 const VWSS::Parties& VWSS::get_parties() const {
@@ -75,16 +80,28 @@ const VWSS::Party& VWSS::get_party(long id) const {
     return parties_.users[id];
 }
 
+void VWSS::warmup() const {
+    // Generous upper bound covering every exponent bit length used in share()/verify_*:
+    // sigma/BCL/CLS ~ T + U + O(lambda), and the largest of all, Sv/E-derived quantities
+    // (bar_v, bar_kj, and their responses) ~ 2*bit_P + U + O(lambda) in the worst case
+    // (a single party's weight can be a large fraction of bit_P). Overshooting just costs
+    // a few extra harmless squarings; undershooting is still safe since the tables extend
+    // lazily on demand, this only widens what's pre-covered.
+    const long max_bits = 2 * parties_.bit_P + intcom_.U() + 4 * params_.lambda + 256;
+    intcom_.warmup(max_bits);
+}
 
-VWSS::Msg VWSS::share() const { 
+
+VWSS::Msg VWSS::share() const {
+    using ShareClock = std::chrono::steady_clock;
+    const auto t_start = ShareClock::now();
     // setup
     NTL::ZZ v(0); // v = \sum_{i \in A} \lambda_i * v_i
-    NTL::ZZ PA(1);  // PA = \prod_{i \in A} p_i
     NTL::ZZ rv(0); // rv = \sum_{i \in A} \lambda_i * r_vi
     NTL::ZZ bound_rv(0); // bound_rv = P/2 * 2^{U + \lambda} * |A|
     VWSS::Msg msgs;
 
-    IntCom intcom;
+    const IntCom& intcom = intcom_;
     const long rnd_bit_length = intcom.U() + params_.lambda;
     const long E = parties_.bit_P - 1 + parties_.A.back().weight + ceil(log2(parties_.A.size())); // upper bound (in bit) on v
     const long Sv = parties_.bit_P - 1 + rnd_bit_length + ceil(log2(parties_.A.size())); // upper bound (in bit) on rv
@@ -98,18 +115,13 @@ VWSS::Msg VWSS::share() const {
     msgs.msg_A.reserve(parties_.A.size());
 
 
-
-    // sum of weights in A
-    long sum_weights_A = 0;
     for(const auto&p :parties_.A) {
         // compute v = \sum_{i \in A} \lambda_i * v_i
         v += p.global_CRT_coef * p.share;
-        PA *= p.modulus;
         IntCom::Com c_vi = intcom.commit(p.share, rnd_bit_length);
         msgs.broadcast.cv.push_back(c_vi.c_x);
         // compute rv = sum_{ i\in A} \lambda_i * r_vi
         rv += p.global_CRT_coef * c_vi.r;
-        sum_weights_A += p.weight;
 
         VWSS::MSG_A msg;
         msg.vi = p.share;
@@ -121,7 +133,7 @@ VWSS::Msg VWSS::share() const {
 
     // commit to bar_s
     // first compute bar_s bit length upper bound (B')
-    const long B_prime = std::max(params_.T, sum_weights_A + params_.t);
+    const long B_prime = std::max(params_.T, parties_.total_weights_in_A + params_.t);
     NTL::ZZ bar_s = NTL::RandomBits_ZZ(B_prime + 2 * params_.lambda);
     IntCom::Com c_bar_s = intcom.commit(bar_s, rnd_bit_length + 2 * params_.lambda);
 
@@ -187,10 +199,12 @@ VWSS::Msg VWSS::share() const {
     // generating fresh ones: c_0 = c_s, r_0 = c_s.r, m_0 = bar_s, s_0 = c_bar_s.r,
     // d_0 = c_bar_s.c_x, and (z_0, t_0) = (Rs, Rrs) computed below.
     // Only slots 1..3 (the three square-root witnesses) need fresh commitments/masks.
+    const auto t_before_three_square = ShareClock::now();
     const NTL::ZZ B_bound = NTL::power2_ZZ(params_.T);
     const NTL::ZZ& x0 = dealer_.lifted_secret;
     std::vector<NTL::ZZ> rp_x(3); // x_1, x_2, x_3
     three_square::decompose(4 * x0 * (B_bound - x0) + 1, rp_x);
+    const auto t_after_three_square = ShareClock::now();
 
     const long BCL_bit_length = params_.T + 2 * params_.lambda;  // range of m_i, i = 1..3
     const long CLS_bit_length = intcom.U() + 3 * params_.lambda; // range of s_i, i = 1..3
@@ -210,13 +224,15 @@ VWSS::Msg VWSS::share() const {
     }
 
     // sigma <- [0, 4*B*C*L*S), d = h^sigma * c_0^{-4*m_0} * prod_{i=1..3} c_i^{-m_i}, m_0 = bar_s
+    // h^sigma uses the precomputed fixed-base table (sigma has the largest bit length of any
+    // term here, so pulling it out also shrinks the remaining multi_pow_mul's shared pass).
     const long sigma_bit_length = params_.T + intcom.U() + 3 * params_.lambda + 2;
     const NTL::ZZ rp_sigma = NTL::RandomBits_ZZ(sigma_bit_length);
-    std::string rp_d_elem = intcom.commit_elem(NTL::ZZ(0), rp_sigma); // h^sigma
-    rp_d_elem = intcom.mul(rp_d_elem, intcom.pow(c_s.c_x, -4 * bar_s));
-    for (int i = 0; i < 3; ++i) {
-        rp_d_elem = intcom.mul(rp_d_elem, intcom.pow(rp_c[i], -rp_m[i]));
-    }
+    std::string rp_d_elem = intcom.mul(
+        intcom.h_pow(rp_sigma),
+        intcom.multi_pow_mul(
+            { c_s.c_x, rp_c[0], rp_c[1], rp_c[2] },
+            { -4 * bar_s, -rp_m[0], -rp_m[1], -rp_m[2] }));
 
     std::ostringstream oss;
     std::ostringstream rp_oss;
@@ -229,6 +245,7 @@ VWSS::Msg VWSS::share() const {
 
     msgs.broadcast.RP.commitments = rp_c;
     //msgs.broadcast.RP.Delta = rp_Delta;
+    const auto t_after_rp_init = ShareClock::now();
 
     NTL::ZZ gamma_ZZ;
     NTL::ZZ bar_k(0);
@@ -251,22 +268,22 @@ VWSS::Msg VWSS::share() const {
     // since the weights in A is sorted in ascending order, we check if the smallest weight is smaller than lambda
     // if so, we will need to compute the UPoM with soundness boost for A
     if(parties_.A[0].weight < params_.lambda) {
-        k = (dealer_.lifted_secret - v) / PA;
+        k = (dealer_.lifted_secret - v) / parties_.PA;
         c_k = intcom.commit(k, rnd_bit_length);
         msgs.broadcast.ck = c_k.c_x;
 
         // commit to bar_k
-        const long bar_k_bit_length = std::max(params_.T, E) + 1 - sum_weights_A + 2 * params_.lambda;
+        const long bar_k_bit_length = std::max(params_.T, E) + 1 - parties_.total_weights_in_A + 2 * params_.lambda;
         bar_k = NTL::RandomBits_ZZ(bar_k_bit_length);
-        bar_c_k = intcom.commit(bar_k, rnd_bit_length);
+        bar_c_k = intcom.commit(bar_k, rnd_bit_length + 2 * params_.lambda);
 
-        delta = bar_s_minus_bar_v - PA * bar_k;
+        delta = bar_s_minus_bar_v - parties_.PA * bar_k;
 
         oss << c_s.c_x << c_bar_s.c_x << bar_c_v.c_x << c_k.c_x << bar_c_k.c_x;
     } else {
         msgs.broadcast.ck = ""; // not used
 
-        delta = bar_s_minus_bar_v % PA;
+        delta = bar_s_minus_bar_v % parties_.PA;
         oss << c_s.c_x << c_bar_s.c_x << bar_c_v.c_x;
     }
 
@@ -288,6 +305,7 @@ VWSS::Msg VWSS::share() const {
         msgs.broadcast.Rrk = 0; // not used
     }
 
+    const auto t_before_rp_resp = ShareClock::now();
     // Range proof responses: z_i = m_i + gamma * x_i, t_i = s_i + gamma * r_i, i = 0..2
     msgs.broadcast.RP.responses.resize(3);
     for (int i = 0; i <= 2; ++i) {
@@ -298,6 +316,7 @@ VWSS::Msg VWSS::share() const {
     for (int i = 0; i <= 2; ++i) {
         msgs.broadcast.RP.tau += gamma_ZZ * rp_x[i] * rp_r[i];
     }
+    const auto t_after_rp_resp = ShareClock::now();
 
     if(has_Merkle_tree) {
         // compute Merkle tree authentication paths for parties in B1
@@ -313,29 +332,39 @@ VWSS::Msg VWSS::share() const {
         }
     }
 
-    //std::cout << "bar_c_s:" << c_bar_s.c_x << std::endl;
-    //std::cout << "bar_c_v:" << bar_c_v.c_x << std::endl;
-    //std::cout << "Delta_A:" << delta << std::endl;
+    const auto t_end = ShareClock::now();
+    const auto to_ms = [](auto d) {
+        return std::chrono::duration<double, std::milli>(d).count();
+    };
+    const auto three_square_time = t_after_three_square - t_before_three_square;
+    // range proof computation = its "commit" phase (witness/mask commits, sigma, d_elem, Delta)
+    // plus its "response" phase (z_i, t_i, tau) -- the two are split apart by the Fiat-Shamir
+    // challenge and the general (non-range-proof) sigma-protocol responses computed in between.
+    const auto range_proof_compute_time = (t_after_rp_init - t_after_three_square) + (t_after_rp_resp - t_before_rp_resp);
+    const auto range_proof_total_time = three_square_time + range_proof_compute_time;
+    const auto total_time = t_end - t_start;
+    const auto proof_generation_time = total_time - range_proof_total_time;
 
+    std::cout << "[share] proof generation (excl. range proof): " << to_ms(proof_generation_time) << " ms\n";
+    std::cout << "[share] range proof - three-square decomposition: " << to_ms(three_square_time) << " ms\n";
+    std::cout << "[share] range proof - computation (excl. three-square): " << to_ms(range_proof_compute_time) << " ms\n";
+    std::cout << "[share] range proof total: " << to_ms(range_proof_total_time) << " ms\n";
 
     return msgs;
 }
 
 bool VWSS::verify_party_in_A(const MSG_A& msg, const Broadcast& broadcast) const {
     // verify broadcast message
-    bool broadcast_result = verify_broadcast(broadcast);
+    // bool broadcast_result = verify_broadcast(broadcast);
 
-    IntCom intcom;
-    // compute commitment c_vi' = g^{vi} * h^{r_vi}
-    std::string c_vi_prime = intcom.commit_elem(msg.vi, msg.rvi);
-
-    return (c_vi_prime == broadcast.cv[msg.msg_id] && broadcast_result);
+    // check commitment c_vi ?= g^{vi} * h^{r_vi}
+    return intcom_.open(broadcast.cv[msg.msg_id], msg.vi, msg.rvi) ;
 
 }
 
 bool VWSS::verify_party_in_B1(const MSG_B1& msg, const NTL::ZZ& lambda_j, const NTL::ZZ& modulus,const Broadcast& broadcast) const {
     // verify broadcast message
-    bool broadcast_result = verify_broadcast(broadcast);
+    // bool broadcast_result = verify_broadcast(broadcast);
     NTL::ZZ gamma_ZZ = hash::hashToZZ128(broadcast.gamma);
 
     // compute Delta_j' = (R_s - R_v - gamma * lambda_j * v_j) mod p_j
@@ -344,17 +373,19 @@ bool VWSS::verify_party_in_B1(const MSG_B1& msg, const NTL::ZZ& lambda_j, const 
     hash::Hash leaf = hash::hash(Delta_j_prime);
     hash::Hash recomputed_root = hash::MerkleTree::verify(leaf, msg.pathj);
 
-    return broadcast_result && (recomputed_root == broadcast.rt);
+    return (recomputed_root == broadcast.rt);
 }
 
 bool VWSS::verify_party_in_B2(const MSG_B2& msg, const NTL::ZZ& lambda_j, const NTL::ZZ& modulus, const Broadcast& broadcast) const {
     // verify broadcast message
-    bool broadcast_result = verify_broadcast(broadcast);
+    //bool broadcast_result = verify_broadcast(broadcast);
     NTL::ZZ gamma_ZZ = hash::hashToZZ128(broadcast.gamma);
 
-    IntCom intcom;
+    const IntCom& intcom = intcom_;
     // compute bar_c_k_j_prime = g^Rkj h^Rrkj c_k_j^-gamma
-    std::string bar_c_k_j_prime = intcom.mul(intcom.commit_elem(msg.Rkj, msg.Rrkj), intcom.pow(msg.ckj,-gamma_ZZ));
+    std::string bar_c_k_j_prime = intcom.mul(
+        intcom.mul(intcom.g_pow(msg.Rkj), intcom.h_pow(msg.Rrkj)),
+        intcom.pow(msg.ckj, -gamma_ZZ));
 
    
 
@@ -364,30 +395,38 @@ bool VWSS::verify_party_in_B2(const MSG_B2& msg, const NTL::ZZ& lambda_j, const 
     hash::Hash leaf = hash::hashConcat(msg.ckj, bar_c_k_j_prime, Delta_j_prime);
     hash::Hash recomputed_root = hash::MerkleTree::verify(leaf, msg.pathj);
 
-    return broadcast_result && (recomputed_root == broadcast.rt);
+    return (recomputed_root == broadcast.rt);
 
 }
 
-bool VWSS::verify_broadcast(const Broadcast& broadcast) const {    
+bool VWSS::verify_broadcast(const Broadcast& broadcast) const {
     // verify the UPoM proof for c_s and c_v
     NTL::ZZ gamma_ZZ = hash::hashToZZ128(broadcast.gamma);
-    // bar_c_s' = g^Rs * h^Rrs * c_s^{-gamma}
-    IntCom intcom;
-    std::string bar_c_s_prime = intcom.mul(intcom.commit_elem(broadcast.Rs, broadcast.Rrs),
-                                            intcom.pow(broadcast.cs, -gamma_ZZ));
+    const IntCom& intcom = intcom_;
 
+    // bar_c_s' = g^Rs * h^Rrs * c_s^{-gamma}. g^Rs/h^Rrs use the precomputed fixed-base table;
+    // only the variable base c_s needs an actual exponentiation.
+    std::string bar_c_s_prime = intcom.mul(
+        intcom.mul(intcom.g_pow(broadcast.Rs), intcom.h_pow(broadcast.Rrs)),
+        intcom.pow(broadcast.cs, -gamma_ZZ));
 
-    //std::cout << "bar_c_s_prime: " << bar_c_s_prime << std::endl;
-
-    NTL::ZZ PA(1);
     // bar_c_v' = g^Rv * h^Rrv * (prod_{i in A} (c_vi)^{lambda_i})^{-gamma}
-    std::string cv_pow_prod = intcom.commit_elem(NTL::ZZ(0), NTL::ZZ(0)); // identity
+    //          = g^Rv * h^Rrv * prod_{i in A} (c_vi)^{-gamma*lambda_i}
+    // pre-multiplying each exponent by -gamma avoids a separate pow(...,-gamma) pass over the
+    // whole product, and batching all |A| variable-base terms together avoids one full
+    // exponentiation per party in A (previously the single most expensive part of
+    // verification for large A). g^Rv/h^Rrv are pulled out to use the fixed-base table.
+    std::vector<std::string> cv_bases;
+    std::vector<NTL::ZZ> cv_exps;
+    cv_bases.reserve(parties_.A.size());
+    cv_exps.reserve(parties_.A.size());
     for (size_t i = 0; i < parties_.A.size(); ++i) {
-        cv_pow_prod = intcom.mul(cv_pow_prod, intcom.pow(broadcast.cv[i], parties_.A[i].global_CRT_coef));
-        PA *= parties_.A[i].modulus;
+        cv_bases.push_back(broadcast.cv[i]);
+        cv_exps.push_back(-gamma_ZZ * parties_.A[i].global_CRT_coef);
     }
-    std::string cv_prod = intcom.pow(cv_pow_prod, -gamma_ZZ);
-    std::string bar_c_v_prime = intcom.mul(intcom.commit_elem(broadcast.Rv, broadcast.Rrv), cv_prod);
+    std::string bar_c_v_prime = intcom.mul(
+        intcom.mul(intcom.g_pow(broadcast.Rv), intcom.h_pow(broadcast.Rrv)),
+        intcom.multi_pow_mul(cv_bases, cv_exps));
 
     //std::cout << "bar_c_v_prime: " << bar_c_v_prime << std::endl;
 
@@ -397,20 +436,19 @@ bool VWSS::verify_broadcast(const Broadcast& broadcast) const {
     // f_i = g^{z_i} h^{t_i} * c_i^{-gamma}, i = 1..3
     std::vector<std::string> rp_f(3);
     for (std::size_t i = 0; i < 3; ++i) {
-        rp_f[i] = intcom.mul(intcom.commit_elem(broadcast.RP.responses[i].first, broadcast.RP.responses[i].second),
-                              intcom.pow(broadcast.RP.commitments[i], -gamma_ZZ));
+        rp_f[i] = intcom.mul(
+            intcom.mul(intcom.g_pow(broadcast.RP.responses[i].first), intcom.h_pow(broadcast.RP.responses[i].second)),
+            intcom.pow(broadcast.RP.commitments[i], -gamma_ZZ));
     }
 
     // f = h^tau * g^gamma * c_0^{4*(gamma*B - z_0)} * prod_{i=1..3} c_i^{-z_i}, B = 2^T, z_0 = Rs
     const NTL::ZZ B_bound = NTL::power2_ZZ(params_.T);
-    std::string f = intcom.commit_elem(gamma_ZZ, broadcast.RP.tau); // g^gamma * h^tau
-    // c_0^{4*(gamma*B - z_0)} with c_0 = c_s and z_0 = Rs
-    f = intcom.mul(f, intcom.pow(broadcast.cs, 4 * (gamma_ZZ * B_bound - broadcast.Rs)));
-
-    // c_i^{-z_i} for i = 1..3
-    for (std::size_t i = 0; i < 3; ++i) {
-        f = intcom.mul(f, intcom.pow(broadcast.RP.commitments[i], -broadcast.RP.responses[i].first));
-    }
+    std::string f = intcom.mul(
+        intcom.mul(intcom.h_pow(broadcast.RP.tau), intcom.g_pow(gamma_ZZ)),
+        intcom.multi_pow_mul(
+            { broadcast.cs, broadcast.RP.commitments[0], broadcast.RP.commitments[1], broadcast.RP.commitments[2] },
+            { 4 * (gamma_ZZ * B_bound - broadcast.Rs),
+              -broadcast.RP.responses[0].first, -broadcast.RP.responses[1].first, -broadcast.RP.responses[2].first }));
 
     // Delta' = H(f_0, f_1, f_2, f_3, f), matching the order d_0,d_1,d_2,d_3,d used in share()
     std::ostringstream rp_oss;
@@ -438,16 +476,17 @@ bool VWSS::verify_broadcast(const Broadcast& broadcast) const {
     // check if A contains any party with weight < lambda
     if (parties_.A[0].weight >= params_.lambda) {
         // Delta_A' = R_s - R_v mod P_A
-        NTL::ZZ Delta_A_prime = Rs_minus_Rv % PA;
+        NTL::ZZ Delta_A_prime = Rs_minus_Rv % parties_.PA;
         // gamma' ?= H(c_s, bar_c_s', bar_c_v', {c_v_i}, {RP.commitments}, Delta', Delta_A', rt)
         gamma_prime = hash::hashConcat(oss.str(), Delta_A_prime, broadcast.rt);
     } else {
         // bar_c_k' =  g^Rk * h^Rrk * c_k^{-gamma}
-        std::string bar_c_k_prime = intcom.mul(intcom.commit_elem(broadcast.Rk, broadcast.Rrk), 
-                                                intcom.pow(broadcast.ck, -gamma_ZZ));
+        std::string bar_c_k_prime = intcom.mul(
+            intcom.mul(intcom.g_pow(broadcast.Rk), intcom.h_pow(broadcast.Rrk)),
+            intcom.pow(broadcast.ck, -gamma_ZZ));
 
         // Delta_A' = R_s - R_v - P_A * R_k
-        NTL::ZZ Delta_A_prime = Rs_minus_Rv - PA * broadcast.Rk;
+        NTL::ZZ Delta_A_prime = Rs_minus_Rv - parties_.PA * broadcast.Rk;
         oss << broadcast.ck << bar_c_k_prime;
         // gamma' ?= H(c_s, bar_c_s', bar_c_v', {c_v_i}, {RP.commitments}, Delta', Delta_A', rt)
         gamma_prime = hash::hashConcat(oss.str(), Delta_A_prime, broadcast.rt);
@@ -476,6 +515,7 @@ NTL::ZZ VWSS::generate_party_modulus(long bits, const std::set<NTL::ZZ>& used_pr
 */
 void VWSS::build_AB_small() {
     long weights_in_A = 0;
+    NTL::ZZ PA(1);
     // absorb all parties with weight < lambda into A, and compute the total weight in A
     // NOTE: this assumes the weights are sorted in ascending order
     parties_.A.clear();
@@ -485,6 +525,7 @@ void VWSS::build_AB_small() {
         if (p.weight < params_.lambda) {
             parties_.A.push_back(p);
             weights_in_A += p.weight;
+            PA *= p.modulus;
         } else {
             parties_.B.push_back(p);
         }
@@ -496,8 +537,12 @@ void VWSS::build_AB_small() {
     while (weights_in_A < params_.T && !parties_.B.empty()) {
         parties_.A.push_back(parties_.B.back());
         weights_in_A += parties_.B.back().weight;
+        PA *= parties_.B.back().modulus;
         parties_.B.pop_back();
     }
+
+    parties_.total_weights_in_A = weights_in_A;
+    parties_.PA = PA;
 
 }
 
@@ -508,6 +553,7 @@ void VWSS::build_AB_small() {
 */
 void VWSS::build_AB_large() {
     long weights_in_A = 0;
+    NTL::ZZ PA(1);
 
     parties_.A.clear();
     parties_.B.clear();
@@ -518,6 +564,7 @@ void VWSS::build_AB_large() {
         if (weights_in_A < params_.T) {
             parties_.A.push_back(user);
             weights_in_A += user.weight;
+            PA *= user.modulus;
         } else {
             parties_.B.push_back(user);
         }
@@ -526,10 +573,13 @@ void VWSS::build_AB_large() {
     // restore to ascending order for later use
     std::reverse(parties_.A.begin(), parties_.A.end());
     std::reverse(parties_.B.begin(), parties_.B.end());
+
+    parties_.total_weights_in_A = weights_in_A;
+    parties_.PA = PA;
 }
 
 const std::vector<long> VWSS::broadcast_size(const Broadcast& broadcast) const {
-    IntCom intcom;
+    const IntCom& intcom = intcom_;
     std::vector<long> bits_vec;
     long bits = 0;
     bits += NTL::NumBits(broadcast.Rs);
@@ -545,7 +595,17 @@ const std::vector<long> VWSS::broadcast_size(const Broadcast& broadcast) const {
         bits += NTL::NumBits(broadcast.Rrk);
     }
 
-    
+    // range proof: commitments c_1,c_2,c_3, response pairs (z_i,t_i), and tau
+    // (RP.Delta is not counted: it's never transmitted, only recomputed by the verifier)
+    for (const auto& c : broadcast.RP.commitments) {
+        bits += intcom.commitment_bitlength(c);
+    }
+    for (const auto& resp : broadcast.RP.responses) {
+        bits += NTL::NumBits(resp.first);
+        bits += NTL::NumBits(resp.second);
+    }
+    bits += NTL::NumBits(broadcast.RP.tau);
+
     bits += 512; // these are 256 bits rt and 256 bits gamma
     bits_vec.push_back(bits);
     for (const auto& c : broadcast.cv) {
@@ -558,7 +618,6 @@ const std::vector<long> VWSS::broadcast_size(const Broadcast& broadcast) const {
 const std::vector<long> VWSS::msg_A_size(const std::vector<MSG_A>& msg_A) const {
     std::vector<long> bits_vec;
     long bits = 0;
-    IntCom intcom;
     for (const auto& msg : msg_A) {
         bits = 0;
         bits += NTL::NumBits(msg.vi);
@@ -570,11 +629,11 @@ const std::vector<long> VWSS::msg_A_size(const std::vector<MSG_A>& msg_A) const 
 
 const std::vector<long> VWSS::msg_B1_size(const std::vector<MSG_B1>& msg_B1) const {
     std::vector<long> bits_vec;
-    long bits = 0;
     for (const auto& msg : msg_B1) {
-        bits = 0;
+        long bits = 0;
         bits += NTL::NumBits(msg.vj);
-        bits += log2(parties_.B.size()) * 256; // for the proof path, we assume the hash is 256 bits, so the size of the proof is log2(|B|) * 256 bits
+        // each auth path step is a 256-bit sibling hash plus a 1-bit left/right flag
+        bits += static_cast<long>(msg.pathj.size()) * (hash::HASH_SIZE * 8 + 1);
         bits_vec.push_back(bits);
     }
     return bits_vec;
@@ -582,17 +641,16 @@ const std::vector<long> VWSS::msg_B1_size(const std::vector<MSG_B1>& msg_B1) con
 
 const std::vector<long> VWSS::msg_B2_size(const std::vector<MSG_B2>& msg_B2) const {
     std::vector<long> bits_vec;
-    long bits = 0;
-    IntCom intcom;
+    const IntCom& intcom = intcom_;
     for (const auto& msg : msg_B2) {
-        bits = 0;
+        long bits = 0;
         bits += NTL::NumBits(msg.vj);
         bits += NTL::NumBits(msg.Rkj);
         bits += NTL::NumBits(msg.Rrkj);
         bits += intcom.commitment_bitlength(msg.ckj);
-        bits += log2(parties_.B.size()) * 256;
+        // each auth path step is a 256-bit sibling hash plus a 1-bit left/right flag
+        bits += static_cast<long>(msg.pathj.size()) * (hash::HASH_SIZE * 8 + 1);
         bits_vec.push_back(bits);
     }
     return bits_vec;
 }
-

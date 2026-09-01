@@ -26,6 +26,12 @@ IntCom::IntCom() {
 }
 
 IntCom::~IntCom() {
+    for (auto& window : g_window_) {
+        for (GEN g : window) gunclone(g);
+    }
+    for (auto& window : h_window_) {
+        for (GEN h : window) gunclone(h);
+    }
     gunclone(delta_);
     gunclone(g_);
     gunclone(h_);
@@ -39,12 +45,9 @@ IntCom::Com IntCom::commit(const NTL::ZZ& x, const long r_range) const {
     //Generate random r in [0, 2^r_range)
     NTL::ZZ r = NTL::RandomBits_ZZ(r_range);
 
-    pari_sp av = avma; 
-    GEN x_gen = zzToGEN(x);
-    GEN r_gen = zzToGEN(r);
-
-    GEN gx = gpow(g_, x_gen, 0);    // g^x
-    GEN hr = gpow(h_, r_gen, 0);    // h^r
+    pari_sp av = avma;
+    GEN gx = window_pow(g_window_, g_, x);    // g^x
+    GEN hr = window_pow(h_window_, h_, r);    // h^r
     GEN c_x = gmul(gx, hr); // c_x = g^x * h^r
 
     Com com;
@@ -62,18 +65,15 @@ bool IntCom::open(const std::string& c_x, const NTL::ZZ& x, const NTL::ZZ& r) co
         pari_sp av = avma;
 
         GEN c_claimed = deserializeForm(c_x);
-        GEN x_gen = zzToGEN(x);
-        GEN r_gen = zzToGEN(r);
-
-        GEN gx = gpow(g_, x_gen, 0);    // g^x
-        GEN hr = gpow(h_, r_gen, 0);    // h^r
+        GEN gx = window_pow(g_window_, g_, x);    // g^x
+        GEN hr = window_pow(h_window_, h_, r);    // h^r
         GEN c_recomputed = gmul(gx, hr); // c_recomputed = g^x * h^r
 
         bool ok = gequal(c_claimed, c_recomputed);
 
         avma = av;
         return ok;
-    }
+}
 
 long IntCom::commitment_bitlength(const std::string& c_x) const {
     pari_sp av = avma;
@@ -87,16 +87,27 @@ long IntCom::commitment_bitlength(const std::string& c_x) const {
 }
 
 std::string IntCom::commit_elem(const NTL::ZZ& x, const NTL::ZZ& y) const {
-    pari_sp av = avma; 
-    
-    GEN x_gen = zzToGEN(x);
-    GEN y_gen = zzToGEN(y);
+    pari_sp av = avma;
 
-    GEN gx = gpow(g_, x_gen, 0);
-    GEN hy = gpow(h_, y_gen, 0);
+    GEN gx = window_pow(g_window_, g_, x);
+    GEN hy = window_pow(h_window_, h_, y);
     GEN c_x = gmul(gx, hy);
 
     std::string s = serializeForm(c_x);
+    avma = av;
+    return s;
+}
+
+std::string IntCom::g_str() const {
+    pari_sp av = avma;
+    std::string s = serializeForm(g_);
+    avma = av;
+    return s;
+}
+
+std::string IntCom::h_str() const {
+    pari_sp av = avma;
+    std::string s = serializeForm(h_);
     avma = av;
     return s;
 }
@@ -121,6 +132,167 @@ std::string IntCom::mul(const std::string& a, const std::string& b) const {
     std::string s = serializeForm(out);
     avma = av;
     return s;
+}
+
+std::string IntCom::multi_pow_mul(const std::vector<std::string>& bases, const std::vector<NTL::ZZ>& exps) const {
+    if (bases.empty() || bases.size() != exps.size()) {
+        throw std::invalid_argument("multi_pow_mul: bases and exps must be non-empty and of equal length");
+    }
+
+    pari_sp av = avma;
+
+    const std::size_t k = bases.size();
+    std::vector<NTL::ZZ> mag(k); // |exps[i]|
+    long max_bits = 0;
+
+    // Per-base window table: table[i][j-1] = operand_i^j for j = 1..2^W-1, where operand_i is
+    // bases[i] (or its inverse if exps[i] < 0). Built fresh each call -- unlike g_pow/h_pow's
+    // table, which is amortized across every call over this object's lifetime since g and h
+    // never change, these bases differ on every call, so there's no reuse to amortize into.
+    std::vector<std::vector<GEN>> table(k);
+    for (std::size_t i = 0; i < k; ++i) {
+        GEN b = deserializeForm(bases[i]);
+        mag[i] = NTL::abs(exps[i]);
+        GEN operand = (exps[i] < 0) ? ginv(b) : b;
+        max_bits = std::max(max_bits, NTL::NumBits(mag[i]));
+
+        table[i].reserve(MULTI_WINDOW_DIGITS);
+        table[i].push_back(operand); // j = 1
+        for (int j = 2; j <= MULTI_WINDOW_DIGITS; ++j) {
+            table[i].push_back(gmul(table[i].back(), operand));
+        }
+    }
+
+    GEN acc = gpow(table[0][0], gen_0, 0); // identity element of the (shared) group
+    long num_windows = (max_bits + MULTI_WINDOW_BITS - 1) / MULTI_WINDOW_BITS;
+
+    // Reclaim each iteration's gsqr/gmul scratch immediately instead of letting it accumulate
+    // for the whole loop: exponents can span thousands of bits (e.g. CRT coefficients scale
+    // with the bit length of the product of all parties' moduli), and without this the
+    // unreclaimed garbage can overflow the PARI stack long before the final result does.
+    for (long w = num_windows - 1; w >= 0; --w) {
+        pari_sp av_loop = avma;
+        for (int s = 0; s < MULTI_WINDOW_BITS; ++s) {
+            acc = gsqr(acc); // advance the shared accumulator by one window's worth of bits
+        }
+        for (std::size_t i = 0; i < k; ++i) {
+            int digit = 0;
+            for (int b = 0; b < MULTI_WINDOW_BITS; ++b) {
+                if (NTL::bit(mag[i], MULTI_WINDOW_BITS * w + b)) {
+                    digit |= (1 << b);
+                }
+            }
+            if (digit != 0) {
+                acc = gmul(acc, table[i][digit - 1]);
+            }
+        }
+        acc = gerepileupto(av_loop, acc);
+    }
+
+    std::string s = serializeForm(acc);
+    avma = av;
+    return s;
+}
+
+std::string IntCom::g_pow(const NTL::ZZ& x) const {
+    pari_sp av = avma;
+    std::string s = serializeForm(window_pow(g_window_, g_, x));
+    avma = av;
+    return s;
+}
+
+std::string IntCom::h_pow(const NTL::ZZ& y) const {
+    pari_sp av = avma;
+    std::string s = serializeForm(window_pow(h_window_, h_, y));
+    avma = av;
+    return s;
+}
+
+void IntCom::warmup(long max_bits) const {
+    long num_windows = (max_bits + WINDOW_BITS - 1) / WINDOW_BITS;
+    ensure_window_table(g_window_, g_, num_windows);
+    ensure_window_table(h_window_, h_, num_windows);
+}
+
+// extend table so that table[k] (k = 0 .. num_windows_needed-1) holds
+// [base^(1*2^(W*k)), base^(2*2^(W*k)), ..., base^((2^W-1)*2^(W*k))].
+// Built one window at a time: window k's j=1 entry ("boundary") is either base itself (k=0)
+// or the previous window's boundary squared W times; entries j=2..2^W-1 are then a simple
+// running product by the boundary. Every new entry is cloned onto PARI's permanent heap so
+// it survives avma resets elsewhere; avma is reset after each window so volatile stack usage
+// stays bounded regardless of how far the table is extended.
+void IntCom::ensure_window_table(std::vector<std::vector<GEN>>& table, GEN base, long num_windows_needed) {
+    while (static_cast<long>(table.size()) < num_windows_needed) {
+        pari_sp av = avma;
+
+        GEN boundary; // base^(2^(W*k)) for the window k being built
+        if (table.empty()) {
+            boundary = base;
+        } else {
+            GEN cur = table.back()[0];
+            for (int i = 0; i < WINDOW_BITS; ++i) {
+                cur = gsqr(cur);
+            }
+            boundary = cur;
+        }
+
+        std::vector<GEN> window;
+        window.reserve(WINDOW_DIGITS);
+        GEN cur = boundary;
+        window.push_back(gclone(cur)); // j = 1
+        for (int j = 2; j <= WINDOW_DIGITS; ++j) {
+            cur = gmul(cur, boundary);
+            window.push_back(gclone(cur)); // j
+        }
+
+        avma = av;
+        table.push_back(std::move(window));
+    }
+}
+
+// compute base^e using the (lazily extended) windowed table: split |e| into WINDOW_BITS-sized
+// windows, multiply in the precomputed value for each window's nonzero digit, then invert if
+// e is negative. No squaring is ever done here directly — the squaring chain and per-window
+// digit precomputation live entirely in ensure_window_table and are paid at most once per
+// window position across the lifetime of this IntCom instance.
+GEN IntCom::window_pow(std::vector<std::vector<GEN>>& table, GEN base, const NTL::ZZ& e) {
+    NTL::ZZ mag = NTL::abs(e);
+    long bits = NTL::NumBits(mag);
+
+    if (bits == 0) {
+        return gpow(base, gen_0, 0); // e == 0: identity element
+    }
+
+    long num_windows = (bits + WINDOW_BITS - 1) / WINDOW_BITS;
+    ensure_window_table(table, base, num_windows);
+
+    // Combine the (already-precomputed) per-window digit values. Reclaim each iteration's gmul
+    // scratch immediately: for large exponents this can run thousands of times, and without
+    // reclaiming, that unreclaimed garbage can overflow the PARI stack on its own.
+    GEN acc = nullptr;
+    for (long k = 0; k < num_windows; ++k) {
+        int digit = 0;
+        for (int b = 0; b < WINDOW_BITS; ++b) {
+            if (NTL::bit(mag, WINDOW_BITS * k + b)) {
+                digit |= (1 << b);
+            }
+        }
+        if (digit != 0) {
+            GEN term = table[k][digit - 1]; // gclone'd: lives on the permanent heap, not the regular stack
+            if (!acc) {
+                acc = term; // no stack garbage created yet, nothing to reclaim
+            } else {
+                pari_sp av_loop = avma;
+                acc = gerepileupto(av_loop, gmul(acc, term));
+            }
+        }
+    }
+
+    if (!acc) {
+        acc = gpow(base, gen_0, 0); // shouldn't happen since bits > 0, but guard anyway
+    }
+
+    return (e < 0) ? ginv(acc) : acc;
 }
 
 GEN IntCom::zzToGEN(const NTL::ZZ& x) {

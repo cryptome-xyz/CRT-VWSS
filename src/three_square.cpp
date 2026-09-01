@@ -1,15 +1,61 @@
 #include "three_square.hpp"
+#include <array>
 #include <cmath>
+#include <cstddef>
 
 namespace three_square {
     namespace {
-        // Small odd primes for fast composite rejection before Miller-Rabin
-        static constexpr long SMALL_PRIMES[] = {
-            3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53,
-            59, 61, 67, 71, 73, 79, 83, 89, 97, 101, 103, 107, 109, 113,
-            127, 131, 137, 139, 149, 151, 157, 163, 167, 173, 179, 181,
-            191, 193, 197, 199, 211, 223, 227, 229, 233, 239, 241, 251
-        };
+        // Odd primes up to SMALL_PRIME_BOUND for fast composite rejection before the expensive
+        // Miller-Rabin test, computed by a sieve of Eratosthenes entirely at compile time (so
+        // this is a genuine hardcoded table baked into the binary, not a runtime computation).
+        // A single MR round on a multi-thousand-bit candidate costs on the order of a full
+        // modular exponentiation (tens of milliseconds at the candidate sizes this module deals
+        // with -- see profiling notes below), against which trial division is essentially free,
+        // so a larger bound is worth it: by Mertens' third theorem, the fraction of composites
+        // surviving trial division up to X is ~e^{-gamma}/ln(X), which drops from ~10% at X=251
+        // (the original 54-prime table) to ~5.7% at X=20000 to ~4.9% at X=100000 -- each
+        // extra 1% of survivors filtered out is one fewer ProbPrime call (the dominant cost)
+        // needed on average per decompose() call. 100000 was chosen as the practical ceiling
+        // for this scheme: the constexpr sieve compiles in ~2s here vs ~0.3s at 20000, but
+        // going further (e.g. 1000000) hits GCC's default -fconstexpr-loop-limit and would need
+        // extra compiler flags for a Mertens-predicted gain of well under 1 more percentage
+        // point of survivors filtered -- not worth the added build complexity.
+        constexpr long SMALL_PRIME_BOUND = 100000;
+
+        constexpr std::array<bool, SMALL_PRIME_BOUND + 1> sieve_composite_flags() {
+            std::array<bool, SMALL_PRIME_BOUND + 1> composite{};
+            for (long i = 2; i * i <= SMALL_PRIME_BOUND; ++i) {
+                if (!composite[i]) {
+                    for (long j = i * i; j <= SMALL_PRIME_BOUND; j += i) {
+                        composite[j] = true;
+                    }
+                }
+            }
+            return composite;
+        }
+
+        constexpr std::size_t count_small_primes() {
+            auto composite = sieve_composite_flags();
+            std::size_t count = 0;
+            for (long i = 3; i <= SMALL_PRIME_BOUND; ++i) { // skip 2: callers already know n's parity
+                if (!composite[i]) ++count;
+            }
+            return count;
+        }
+
+        constexpr std::size_t SMALL_PRIME_COUNT = count_small_primes();
+
+        constexpr std::array<long, SMALL_PRIME_COUNT> compute_small_primes() {
+            auto composite = sieve_composite_flags();
+            std::array<long, SMALL_PRIME_COUNT> primes{};
+            std::size_t idx = 0;
+            for (long i = 3; i <= SMALL_PRIME_BOUND; ++i) {
+                if (!composite[i]) primes[idx++] = i;
+            }
+            return primes;
+        }
+
+        constexpr std::array<long, SMALL_PRIME_COUNT> SMALL_PRIMES = compute_small_primes();
 
         bool is_square(const NTL::ZZ& n, NTL::ZZ& r) {
             if (n < 0) return false;
@@ -17,7 +63,6 @@ namespace three_square {
             return r * r == n;
         }
 
-        // Rejects ~87% of composites before the expensive ProbPrime call
         bool has_small_factor(const NTL::ZZ& n) {
             for (long p : SMALL_PRIMES)
                 if (n % p == 0) return true;
