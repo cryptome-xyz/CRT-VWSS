@@ -125,14 +125,13 @@ const VWSS::Params test_vector_eth() {
 }
 
 int main() {
-    // choose the test vector for benchmarking
-    VWSS::Params params = test_vector(128);
 
-    {
+{
+    // choose the test vector for benchmarking
+    VWSS::Params params = test_vector_eth();
     VWSS vwss;
     // true for VWSS-method 1 
-    vwss.setup_dealer_and_parties(params, false);
-    vwss.warmup();
+    vwss.setup_dealer_and_parties(params, true);
     auto start = BenchmarkClock::now();
     VWSS::Msg msgs = vwss.share();
     auto end = BenchmarkClock::now();
@@ -147,20 +146,17 @@ int main() {
     long total_msg_bit_length = 0;
     std::vector<long> msg_A_bit_length = vwss.msg_A_size(msgs.msg_A);
     for (size_t i = 0; i < msg_A_bit_length.size(); i++) {
-        // std::cout << "MSG_A Bit Length for party " << msgs.msg_A[i].id << ": " << msg_A_bit_length[i] << std::endl;
         total_msg_bit_length += msg_A_bit_length[i];
     } 
     
 
     std::vector<long> msg_B1_bit_length = vwss.msg_B1_size(msgs.msg_B1);
     for(size_t i = 0; i < msg_B1_bit_length.size(); i++) {
-        //std::cout << "MSG_B1 Bit Length for party " << msgs.msg_B1[i].id << ": " << msg_B1_bit_length[i] << std::endl;
         total_msg_bit_length += msg_B1_bit_length[i];
     }
 
     std::vector<long> msg_B2_bit_length = vwss.msg_B2_size(msgs.msg_B2);
     for(size_t i = 0; i < msg_B2_bit_length.size(); i++) {
-        //std::cout << "MSG_B2 Bit Length for party " << msgs.msg_B2[i].id << ": " << msg_B2_bit_length[i] << std::endl;
         total_msg_bit_length += msg_B2_bit_length[i];
     }
 
@@ -186,8 +182,6 @@ int main() {
             pari_close();
             std::exit(EXIT_FAILURE);
         }
-        //std::cout << "Message verification " << (result ? "successful" : "NOT successful")
-        //           << " for user" << a.id << " in A!" << std::endl;
     }
 
     BenchmarkClock::duration total_verify_B1_time{};
@@ -202,7 +196,6 @@ int main() {
             pari_close();
             std::exit(EXIT_FAILURE);
         }
-        // std::cout << "Message verification successful for user" << p.id << " in B1!" << std::endl;
     }
 
     BenchmarkClock::duration total_verify_B2_time{};
@@ -217,7 +210,6 @@ int main() {
             pari_close();
             std::exit(EXIT_FAILURE);
         }
-        // std::cout << "Message verification successful for user" << p.id << " in B2!" << std::endl;
     }
 
     if (!msgs.msg_A.empty()) {
@@ -247,26 +239,8 @@ int main() {
                           static_cast<double>(total_verify_count)
                    << " ms\n";
     }
-    } // end scope: vwss destroyed here, while PARI is still initialized
-
+}
     pari_close();
-
-    // NTL::ZZ x_0 = NTL::RandomBits_ZZ(9290);
-    // NTL::ZZ n = (NTL::power2_ZZ(9290) - x_0) * x_0 * 4 + 1;
-    // std::vector<NTL::ZZ> decompose(3);
-    // auto start = std::chrono::high_resolution_clock::now();
-    // three_square::decompose(n, decompose);
-    // auto end = std::chrono::high_resolution_clock::now();
-    // auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-    // std::cout << "Time taken for three-square decomposition: " << elapsed.count() << " ms\n";
-
-    // if (three_square::verify(n, decompose)) {
-    //     std::cout << "Decomposition successful!" << std::endl;
-    //     std::cout << "x: " << decompose[0] << ", y: " << decompose[1] << ", z: " << decompose[2] << std::endl;
-    // } else {
-    //     std::cout << "Decomposition failed!" << std::endl;
-    // }
-
 
     return 0;
 }

@@ -1,5 +1,3 @@
 .cache/
 .vscode/
-build/
-fetch_data.py
 build-release/

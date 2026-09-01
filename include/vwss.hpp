@@ -26,28 +26,28 @@ struct Party {
     };
 
     struct Params {
-        long lambda = 128;         // security parameter
-        long t = 0;                 // privacy threhshold
-        long T = 0;                //reconstruction threshold
-        NTL::ZZ p0;                // secret field modulus
-        long L;                     // lifting bit length (normally L = t + 2 * lambda = T - lambda)
-        std::vector<long> weights;  // sorted weight vector after scaling
+        long lambda = 128;         
+        long t = 0;                 
+        long T = 0;                
+        NTL::ZZ p0;                
+        long L;                     
+        std::vector<long> weights; 
     };
 
     struct Parties {
-        NTL::ZZ P;  // the product of all parties' moduli
-        long bit_P = 0;    // the bit length of P
-        NTL::ZZ PA; // the product of parties moduli in A
-        std::vector<Party> users; // all parties in the system
-        std::vector<Party> A;  // Set A of parties with weights >= T
-        std::vector<Party> B; // Set B of parties not in A 
+        NTL::ZZ P;  
+        long bit_P = 0;    
+        NTL::ZZ PA; 
+        std::vector<Party> users; 
+        std::vector<Party> A;  
+        std::vector<Party> B;
         long total_weights_in_A;
     };
 
     struct RangeProof {
-        std::vector<std::string> commitments; // commitments c_1,c_2,c_3 to the square decomposition of 4*x0*(B-x0)+1
+        std::vector<std::string> commitments; 
         hash::Hash Delta;
-        std::vector<std::pair<NTL::ZZ, NTL::ZZ>> responses; // (z_i, t_i) for i = 1..3
+        std::vector<std::pair<NTL::ZZ, NTL::ZZ>> responses; 
         NTL::ZZ tau;
     };
 
@@ -111,18 +111,11 @@ struct Party {
     // on input a set of parameters, set up the dealer and parties
     void setup_dealer_and_parties(const Params& params, bool method1);
 
-    // pre-extend IntCom's fixed-base g/h tables to cover every exponent bit length used by
-    // share()/verify_*, so their one-time table-build cost doesn't land inside a timed region.
-    // Call after setup_dealer_and_parties() and before the region you want to measure; optional,
-    // since the tables also extend lazily on first use if this is never called.
-    void warmup() const;
-
     // getters
     const Params& get_params() const;
     const Dealer& get_dealer() const;
     const Party& get_party(long id) const;
     const Parties& get_parties() const;
-    // const Broadcast& get_broadcast() const;
 
     // Distribute shares and compute proof
     VWSS::Msg share() const;
@@ -143,13 +136,11 @@ struct Party {
     const std::vector<long> msg_B1_size(const std::vector<MSG_B1>& msg_B1) const ;
     const std::vector<long> msg_B2_size(const std::vector<MSG_B2>& msg_B2) const ;
 private:
-    // for recording Merkle tree leaf of party in B with large weight
     struct PendingB1 {
         size_t msg_index;
         size_t leaf_index;
     };
 
-    // for recording Merkle tree leaf and mask values of party in B with small weight
     struct PendingB2 {
         size_t msg_index;
         NTL::ZZ kj;
@@ -159,10 +150,10 @@ private:
         size_t leaf_index;
     };
     
-    Params params_; // system parameters
-    Dealer dealer_; // dealer
-    Parties parties_;   // parties
-    IntCom intcom_; // group parameters (g, h, delta) parsed once, reused across all calls
+    Params params_;
+    Dealer dealer_; 
+    Parties parties_;   
+    IntCom intcom_; 
     void setup_dealer();
     void setup_parties(bool method1);
     NTL::ZZ generate_party_modulus(long bits, const std::set<NTL::ZZ>& used_primes) const;

@@ -27,9 +27,7 @@ void VWSS::setup_dealer() {
 void VWSS::setup_parties(bool method1) {
     // In CRT-based SS, primes must be distinct
     std::set<NTL::ZZ> used_primes;
-    // initialize the set of used primes with p0 
     used_primes.insert(params_.p0);
-    // initialize the product of all parties' moduli as 1
     parties_.P = 1;
     parties_.users.clear();
     parties_.users.reserve(params_.weights.size());
@@ -37,15 +35,15 @@ void VWSS::setup_parties(bool method1) {
 
     for(std::size_t i = 0; i < params_.weights.size(); ++i) {
         Party p;
-        p.id = static_cast<long>(i);    // set party id
-        p.weight = params_.weights[i];  // set party weight
+        p.id = static_cast<long>(i);    
+        p.weight = params_.weights[i];  
         // generate party modulus with p.weight bits
         p.modulus = generate_party_modulus(p.weight, used_primes);  
-        parties_.P *= p.modulus;    // update the product of all parties' moduli
+        parties_.P *= p.modulus;    
         parties_.bit_P += p.weight;
-        p.share = dealer_.lifted_secret % p.modulus;    // compute party share = lifted_secret mod party modulus
+        p.share = dealer_.lifted_secret % p.modulus;    
         used_primes.insert(p.modulus);
-        parties_.users.push_back(p);    // add party to the list of users
+        parties_.users.push_back(p);    
     }
 
     // compute global_CRT_coefficients for every party
@@ -72,33 +70,19 @@ const VWSS::Parties& VWSS::get_parties() const {
 }
 
 const VWSS::Party& VWSS::get_party(long id) const {
-    // party ids are assigned as their index into parties_.users (see setup_parties),
-    // so this can be a direct lookup instead of a linear scan.
     if (id < 0 || static_cast<std::size_t>(id) >= parties_.users.size()) {
         throw std::out_of_range("no party with the given id");
     }
     return parties_.users[id];
 }
 
-void VWSS::warmup() const {
-    // Generous upper bound covering every exponent bit length used in share()/verify_*:
-    // sigma/BCL/CLS ~ T + U + O(lambda), and the largest of all, Sv/E-derived quantities
-    // (bar_v, bar_kj, and their responses) ~ 2*bit_P + U + O(lambda) in the worst case
-    // (a single party's weight can be a large fraction of bit_P). Overshooting just costs
-    // a few extra harmless squarings; undershooting is still safe since the tables extend
-    // lazily on demand, this only widens what's pre-covered.
-    const long max_bits = 2 * parties_.bit_P + intcom_.U() + 4 * params_.lambda + 256;
-    intcom_.warmup(max_bits);
-}
-
-
 VWSS::Msg VWSS::share() const {
     using ShareClock = std::chrono::steady_clock;
     const auto t_start = ShareClock::now();
     // setup
-    NTL::ZZ v(0); // v = \sum_{i \in A} \lambda_i * v_i
-    NTL::ZZ rv(0); // rv = \sum_{i \in A} \lambda_i * r_vi
-    NTL::ZZ bound_rv(0); // bound_rv = P/2 * 2^{U + \lambda} * |A|
+    NTL::ZZ v(0); 
+    NTL::ZZ rv(0); 
+    NTL::ZZ bound_rv(0);
     VWSS::Msg msgs;
 
     const IntCom& intcom = intcom_;
@@ -193,12 +177,6 @@ VWSS::Msg VWSS::share() const {
         msgs.broadcast.rt = hash::Hash{};   // empty hash
     }
 
-    // Range proof (RP_CG): prove dealer_.lifted_secret (= x_0) lies in [0, 2^T] via
-    // 4*x_0*(B - x_0) + 1 = x_1^2 + x_2^2 + x_3^2, B = 2^T.
-    // Slot 0 (x_0) reuses the sigma-protocol pieces already computed above instead of
-    // generating fresh ones: c_0 = c_s, r_0 = c_s.r, m_0 = bar_s, s_0 = c_bar_s.r,
-    // d_0 = c_bar_s.c_x, and (z_0, t_0) = (Rs, Rrs) computed below.
-    // Only slots 1..3 (the three square-root witnesses) need fresh commitments/masks.
     const auto t_before_three_square = ShareClock::now();
     const NTL::ZZ B_bound = NTL::power2_ZZ(params_.T);
     const NTL::ZZ& x0 = dealer_.lifted_secret;
@@ -206,8 +184,8 @@ VWSS::Msg VWSS::share() const {
     three_square::decompose(4 * x0 * (B_bound - x0) + 1, rp_x);
     const auto t_after_three_square = ShareClock::now();
 
-    const long BCL_bit_length = params_.T + 2 * params_.lambda;  // range of m_i, i = 1..3
-    const long CLS_bit_length = intcom.U() + 3 * params_.lambda; // range of s_i, i = 1..3
+    const long BCL_bit_length = params_.T + 2 * params_.lambda;  
+    const long CLS_bit_length = intcom.U() + 3 * params_.lambda;
     std::vector<NTL::ZZ> rp_r(3), rp_m(3), rp_s(3);
     std::vector<std::string> rp_c(3), rp_d(3);
     for (int i = 0; i < 3; ++i) {
@@ -219,13 +197,8 @@ VWSS::Msg VWSS::share() const {
         IntCom::Com d_i = intcom.commit(rp_m[i], CLS_bit_length);
         rp_s[i] = d_i.r;
         rp_d[i] = d_i.c_x;
-
-        //std::cout << "d_" << i+1 << ": " << rp_d[i] << std::endl;
     }
 
-    // sigma <- [0, 4*B*C*L*S), d = h^sigma * c_0^{-4*m_0} * prod_{i=1..3} c_i^{-m_i}, m_0 = bar_s
-    // h^sigma uses the precomputed fixed-base table (sigma has the largest bit length of any
-    // term here, so pulling it out also shrinks the remaining multi_pow_mul's shared pass).
     const long sigma_bit_length = params_.T + intcom.U() + 3 * params_.lambda + 2;
     const NTL::ZZ rp_sigma = NTL::RandomBits_ZZ(sigma_bit_length);
     std::string rp_d_elem = intcom.mul(
@@ -236,7 +209,7 @@ VWSS::Msg VWSS::share() const {
 
     std::ostringstream oss;
     std::ostringstream rp_oss;
-    rp_oss << c_bar_s.c_x; // d_0, reusing the existing mask commitment to bar_s
+    rp_oss << c_bar_s.c_x; 
     for (int i = 0; i < 3; i++) {
         rp_oss << rp_d[i];
     }
@@ -244,7 +217,6 @@ VWSS::Msg VWSS::share() const {
     const hash::Hash rp_Delta = hash::hash(rp_oss.str());
 
     msgs.broadcast.RP.commitments = rp_c;
-    //msgs.broadcast.RP.Delta = rp_Delta;
     const auto t_after_rp_init = ShareClock::now();
 
     NTL::ZZ gamma_ZZ;
@@ -259,14 +231,12 @@ VWSS::Msg VWSS::share() const {
         oss << c;
     }
 
-    // fold the range proof's first-move commitments into the same Fiat-Shamir transcript
     for (const auto& c : rp_c) {
         oss << c;
     }
     oss.write(reinterpret_cast<const char*>(rp_Delta.data()), rp_Delta.size());
     
-    // since the weights in A is sorted in ascending order, we check if the smallest weight is smaller than lambda
-    // if so, we will need to compute the UPoM with soundness boost for A
+
     if(parties_.A[0].weight < params_.lambda) {
         k = (dealer_.lifted_secret - v) / parties_.PA;
         c_k = intcom.commit(k, rnd_bit_length);
@@ -337,9 +307,6 @@ VWSS::Msg VWSS::share() const {
         return std::chrono::duration<double, std::milli>(d).count();
     };
     const auto three_square_time = t_after_three_square - t_before_three_square;
-    // range proof computation = its "commit" phase (witness/mask commits, sigma, d_elem, Delta)
-    // plus its "response" phase (z_i, t_i, tau) -- the two are split apart by the Fiat-Shamir
-    // challenge and the general (non-range-proof) sigma-protocol responses computed in between.
     const auto range_proof_compute_time = (t_after_rp_init - t_after_three_square) + (t_after_rp_resp - t_before_rp_resp);
     const auto range_proof_total_time = three_square_time + range_proof_compute_time;
     const auto total_time = t_end - t_start;
@@ -354,8 +321,6 @@ VWSS::Msg VWSS::share() const {
 }
 
 bool VWSS::verify_party_in_A(const MSG_A& msg, const Broadcast& broadcast) const {
-    // verify broadcast message
-    // bool broadcast_result = verify_broadcast(broadcast);
 
     // check commitment c_vi ?= g^{vi} * h^{r_vi}
     return intcom_.open(broadcast.cv[msg.msg_id], msg.vi, msg.rvi) ;
@@ -363,8 +328,7 @@ bool VWSS::verify_party_in_A(const MSG_A& msg, const Broadcast& broadcast) const
 }
 
 bool VWSS::verify_party_in_B1(const MSG_B1& msg, const NTL::ZZ& lambda_j, const NTL::ZZ& modulus,const Broadcast& broadcast) const {
-    // verify broadcast message
-    // bool broadcast_result = verify_broadcast(broadcast);
+
     NTL::ZZ gamma_ZZ = hash::hashToZZ128(broadcast.gamma);
 
     // compute Delta_j' = (R_s - R_v - gamma * lambda_j * v_j) mod p_j
@@ -377,8 +341,7 @@ bool VWSS::verify_party_in_B1(const MSG_B1& msg, const NTL::ZZ& lambda_j, const 
 }
 
 bool VWSS::verify_party_in_B2(const MSG_B2& msg, const NTL::ZZ& lambda_j, const NTL::ZZ& modulus, const Broadcast& broadcast) const {
-    // verify broadcast message
-    //bool broadcast_result = verify_broadcast(broadcast);
+
     NTL::ZZ gamma_ZZ = hash::hashToZZ128(broadcast.gamma);
 
     const IntCom& intcom = intcom_;
@@ -404,18 +367,12 @@ bool VWSS::verify_broadcast(const Broadcast& broadcast) const {
     NTL::ZZ gamma_ZZ = hash::hashToZZ128(broadcast.gamma);
     const IntCom& intcom = intcom_;
 
-    // bar_c_s' = g^Rs * h^Rrs * c_s^{-gamma}. g^Rs/h^Rrs use the precomputed fixed-base table;
-    // only the variable base c_s needs an actual exponentiation.
+    // bar_c_s' = g^Rs * h^Rrs * c_s^{-gamma}. g^Rs/h^Rrs
     std::string bar_c_s_prime = intcom.mul(
         intcom.mul(intcom.g_pow(broadcast.Rs), intcom.h_pow(broadcast.Rrs)),
         intcom.pow(broadcast.cs, -gamma_ZZ));
 
-    // bar_c_v' = g^Rv * h^Rrv * (prod_{i in A} (c_vi)^{lambda_i})^{-gamma}
-    //          = g^Rv * h^Rrv * prod_{i in A} (c_vi)^{-gamma*lambda_i}
-    // pre-multiplying each exponent by -gamma avoids a separate pow(...,-gamma) pass over the
-    // whole product, and batching all |A| variable-base terms together avoids one full
-    // exponentiation per party in A (previously the single most expensive part of
-    // verification for large A). g^Rv/h^Rrv are pulled out to use the fixed-base table.
+    // bar_c_v' = g^Rv * h^Rrv * (prod_{i in A} (c_vi)^{lambda_i})^{-gamma} 
     std::vector<std::string> cv_bases;
     std::vector<NTL::ZZ> cv_exps;
     cv_bases.reserve(parties_.A.size());
@@ -427,8 +384,6 @@ bool VWSS::verify_broadcast(const Broadcast& broadcast) const {
     std::string bar_c_v_prime = intcom.mul(
         intcom.mul(intcom.g_pow(broadcast.Rv), intcom.h_pow(broadcast.Rrv)),
         intcom.multi_pow_mul(cv_bases, cv_exps));
-
-    //std::cout << "bar_c_v_prime: " << bar_c_v_prime << std::endl;
 
     const NTL::ZZ Rs_minus_Rv = broadcast.Rs - broadcast.Rv;
 
@@ -450,7 +405,7 @@ bool VWSS::verify_broadcast(const Broadcast& broadcast) const {
             { 4 * (gamma_ZZ * B_bound - broadcast.Rs),
               -broadcast.RP.responses[0].first, -broadcast.RP.responses[1].first, -broadcast.RP.responses[2].first }));
 
-    // Delta' = H(f_0, f_1, f_2, f_3, f), matching the order d_0,d_1,d_2,d_3,d used in share()
+    // Delta' = H(f_0, f_1, f_2, f_3, f)
     std::ostringstream rp_oss;
     rp_oss << bar_c_s_prime;
     for (std::size_t i = 0; i < 3; ++i) {

@@ -5,21 +5,6 @@
 
 namespace three_square {
     namespace {
-        // Odd primes up to SMALL_PRIME_BOUND for fast composite rejection before the expensive
-        // Miller-Rabin test, computed by a sieve of Eratosthenes entirely at compile time (so
-        // this is a genuine hardcoded table baked into the binary, not a runtime computation).
-        // A single MR round on a multi-thousand-bit candidate costs on the order of a full
-        // modular exponentiation (tens of milliseconds at the candidate sizes this module deals
-        // with -- see profiling notes below), against which trial division is essentially free,
-        // so a larger bound is worth it: by Mertens' third theorem, the fraction of composites
-        // surviving trial division up to X is ~e^{-gamma}/ln(X), which drops from ~10% at X=251
-        // (the original 54-prime table) to ~5.7% at X=20000 to ~4.9% at X=100000 -- each
-        // extra 1% of survivors filtered out is one fewer ProbPrime call (the dominant cost)
-        // needed on average per decompose() call. 100000 was chosen as the practical ceiling
-        // for this scheme: the constexpr sieve compiles in ~2s here vs ~0.3s at 20000, but
-        // going further (e.g. 1000000) hits GCC's default -fconstexpr-loop-limit and would need
-        // extra compiler flags for a Mertens-predicted gain of well under 1 more percentage
-        // point of survivors filtered -- not worth the added build complexity.
         constexpr long SMALL_PRIME_BOUND = 100000;
 
         constexpr std::array<bool, SMALL_PRIME_BOUND + 1> sieve_composite_flags() {
@@ -37,7 +22,7 @@ namespace three_square {
         constexpr std::size_t count_small_primes() {
             auto composite = sieve_composite_flags();
             std::size_t count = 0;
-            for (long i = 3; i <= SMALL_PRIME_BOUND; ++i) { // skip 2: callers already know n's parity
+            for (long i = 3; i <= SMALL_PRIME_BOUND; ++i) { 
                 if (!composite[i]) ++count;
             }
             return count;
@@ -94,7 +79,7 @@ namespace three_square {
             return r + NTL::conv<NTL::ZZ>(mod) * NTL::RandomBnd(q);
         }
 
-        // Caller guarantees p is prime and p ≡ 1 (mod 4)
+        // guarantees p is prime and p ≡ 1 (mod 4)
         bool cornacchia_prime_1mod4(const NTL::ZZ& p, NTL::ZZ& a, NTL::ZZ& b) {
             NTL::ZZ r;
             while (true) {
@@ -130,8 +115,6 @@ namespace three_square {
         }
     }
 
-    // n is taken by value: the algorithm strips factors of 4 internally and must
-    // not modify the caller's variable (otherwise verify(original_n, result) fails)
     bool decompose(NTL::ZZ n, std::vector<NTL::ZZ>& out) {
         if (n < 0 || n % 8 == 7) return false;
 
@@ -140,7 +123,6 @@ namespace three_square {
             return true;
         }
 
-        // Perfect-square shortcut: n = r² + 0² + 0²
         {
             NTL::ZZ r;
             if (is_square(n, r)) {
@@ -174,7 +156,7 @@ namespace three_square {
         } else if (r8 == 6) {
             mod = 4; residue = 2; twice_prime = true;
         } else {
-            return false;  // r8 == 7 after stripping all 4s: three-square theorem says impossible
+            return false;  
         }
 
         for (;;) {
