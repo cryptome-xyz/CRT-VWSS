@@ -90,7 +90,7 @@ const VWSS::Params test_vector(int num_parties) {
     }
     params.T = static_cast<long>(total_weights * 0.51);
     params.t = params.T - 3 * params.lambda;
-    params.L = params.t + 2 * params.lambda;
+    params.L = params.T - params.lambda;
     std::cout << "Total Weights: " << total_weights << std::endl;
     std::cout << "Reconstruction Threshold: " << params.T << std::endl;
     return params;
@@ -118,7 +118,7 @@ const VWSS::Params test_vector_eth() {
     }
     params.T = static_cast<long>(total_weights * 0.51); 
     params.t = params.T - 3 * params.lambda;    
-    params.L = params.t + 2 * params.lambda;
+    params.L = params.T - params.lambda;
     std::cout << "Total Weights: " << total_weights << std::endl;
     std::cout << "Reconstruction Threshold: " << params.T << std::endl;
     return params;
