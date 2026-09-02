@@ -43,7 +43,7 @@ const VWSS::Params test_vector(int num_parties) {
             params.T = total_weights;
             // privacy threshold is T - 2lambda since the total weight is small in this case
             params.t = params.T - 2 * params.lambda;
-            params.L = params.T;
+            params.L = params.T - params.lambda;
             std::cout << "Total Weights: " << total_weights << std::endl;
             std::cout << "Reconstruction Threshold: " << params.T << std::endl;
             return params;
@@ -128,7 +128,7 @@ int main() {
 
 {
     // choose the test vector for benchmarking
-    VWSS::Params params = test_vector_eth();
+    VWSS::Params params = test_vector(4);
     VWSS vwss;
     // true for VWSS-method 1 
     vwss.setup_dealer_and_parties(params, true);
