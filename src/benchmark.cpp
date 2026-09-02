@@ -128,7 +128,7 @@ int main() {
 
 {
     // choose the test vector for benchmarking
-    VWSS::Params params = test_vector(4);
+    VWSS::Params params = test_vector_eth();
     VWSS vwss;
     // true for VWSS-method 1 
     vwss.setup_dealer_and_parties(params, true);

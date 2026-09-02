@@ -77,8 +77,8 @@ const VWSS::Party& VWSS::get_party(long id) const {
 }
 
 VWSS::Msg VWSS::share() const {
-    using ShareClock = std::chrono::steady_clock;
-    const auto t_start = ShareClock::now();
+    using BenchmarkClock = std::chrono::steady_clock;
+    const auto t_start = BenchmarkClock::now();
     // setup
     NTL::ZZ v(0); 
     NTL::ZZ rv(0); 
@@ -176,13 +176,16 @@ VWSS::Msg VWSS::share() const {
     } else {
         msgs.broadcast.rt = hash::Hash{};   // empty hash
     }
-
-    const auto t_before_three_square = ShareClock::now();
+    
     const NTL::ZZ B_bound = NTL::power2_ZZ(params_.T);
     const NTL::ZZ& x0 = dealer_.lifted_secret;
     std::vector<NTL::ZZ> rp_x(3); // x_1, x_2, x_3
-    three_square::decompose(4 * x0 * (B_bound - x0) + 1, rp_x);
-    const auto t_after_three_square = ShareClock::now();
+    const auto t_before_three_square = BenchmarkClock::now();
+    const bool success = three_square::decompose(4 * x0 * (B_bound - x0) + 1, rp_x);
+    const auto t_after_three_square = BenchmarkClock::now();
+    if (!success) {
+        throw std::runtime_error("Three-square decomposition failed");
+    }
 
     const long BCL_bit_length = params_.T + 2 * params_.lambda;  
     const long CLS_bit_length = intcom.U() + 3 * params_.lambda;
@@ -217,7 +220,7 @@ VWSS::Msg VWSS::share() const {
     const hash::Hash rp_Delta = hash::hash(rp_oss.str());
 
     msgs.broadcast.RP.commitments = rp_c;
-    const auto t_after_rp_init = ShareClock::now();
+    const auto t_after_rp_init = BenchmarkClock::now();
 
     NTL::ZZ gamma_ZZ;
     NTL::ZZ bar_k(0);
@@ -275,7 +278,7 @@ VWSS::Msg VWSS::share() const {
         msgs.broadcast.Rrk = 0; // not used
     }
 
-    const auto t_before_rp_resp = ShareClock::now();
+    const auto t_before_rp_resp = BenchmarkClock::now();
     // Range proof responses: z_i = m_i + gamma * x_i, t_i = s_i + gamma * r_i, i = 0..2
     msgs.broadcast.RP.responses.resize(3);
     for (int i = 0; i <= 2; ++i) {
@@ -286,7 +289,7 @@ VWSS::Msg VWSS::share() const {
     for (int i = 0; i <= 2; ++i) {
         msgs.broadcast.RP.tau += gamma_ZZ * rp_x[i] * rp_r[i];
     }
-    const auto t_after_rp_resp = ShareClock::now();
+    const auto t_after_rp_resp = BenchmarkClock::now();
 
     if(has_Merkle_tree) {
         // compute Merkle tree authentication paths for parties in B1
@@ -302,7 +305,7 @@ VWSS::Msg VWSS::share() const {
         }
     }
 
-    const auto t_end = ShareClock::now();
+    const auto t_end = BenchmarkClock::now();
     const auto to_ms = [](auto d) {
         return std::chrono::duration<double, std::milli>(d).count();
     };
