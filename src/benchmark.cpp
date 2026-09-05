@@ -89,8 +89,8 @@ const VWSS::Params test_vector(int num_parties) {
         total_weights += i;
     }
     params.T = static_cast<long>(total_weights * 0.51);
-    params.t = params.T - 3 * params.lambda;
-    params.L = params.T - params.lambda;
+    params.t = params.T - 2 * params.lambda;
+    params.L = params.t + params.lambda;
     std::cout << "Total Weights: " << total_weights << std::endl;
     std::cout << "Reconstruction Threshold: " << params.T << std::endl;
     return params;
@@ -101,7 +101,7 @@ const VWSS::Params test_vector(int num_parties) {
  * Test vectors for timing reported in Table 1
  * Total weightes = 4711
  * Reconstruction Threshold = 2402 (51% of total weights)
- * Privacy Threshold = 2402 - 3 * lambda = 2050
+ * Privacy Threshold = 2402 - 2 * lambda = 2146
  */
 const VWSS::Params test_vector_eth() {
     // initialize PARI with 128 MB stack and 2 preallocated GENs
@@ -117,8 +117,8 @@ const VWSS::Params test_vector_eth() {
         total_weights += i;
     }
     params.T = static_cast<long>(total_weights * 0.51); 
-    params.t = params.T - 3 * params.lambda;    
-    params.L = params.T - params.lambda;
+    params.t = params.T - 2 * params.lambda;    
+    params.L = params.t + params.lambda;
     std::cout << "Total Weights: " << total_weights << std::endl;
     std::cout << "Reconstruction Threshold: " << params.T << std::endl;
     return params;
