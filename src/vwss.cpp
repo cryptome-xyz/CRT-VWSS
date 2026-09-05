@@ -76,6 +76,11 @@ const VWSS::Party& VWSS::get_party(long id) const {
     return parties_.users[id];
 }
 
+void VWSS::warmup() const {
+    const long max_bits = 2 * parties_.bit_P + intcom_.U() + 4 * params_.lambda + 256;
+    intcom_.warmup(max_bits);
+}
+
 VWSS::Msg VWSS::share() const {
     using BenchmarkClock = std::chrono::steady_clock;
     const auto t_start = BenchmarkClock::now();
@@ -137,16 +142,18 @@ VWSS::Msg VWSS::share() const {
         if(p.weight >= params_.lambda) {
             VWSS::MSG_B1 msg_j;
             msg_j.id = p.id;
+            RAND_bytes(msg_j.rho, 32);
             NTL::ZZ Deltaj = bar_s_minus_bar_v % p.modulus;
             msg_j.vj = p.share;
             msg_j.msg_id = msgs.msg_B1.size();
             msgs.msg_B1.push_back(msg_j);
             // hash the Delta_j
-            hash_list.push_back(hash::hash(Deltaj)); 
+            hash_list.push_back(hash::hashConcat(Deltaj, p.share, msg_j.rho)); 
             pending_B1.push_back({msgs.msg_B1.size() - 1, hash_list.size() - 1});
         } else {
             VWSS::MSG_B2 msg_j;
             msg_j.id = p.id;
+            RAND_bytes(msg_j.rho, 32);
             msg_j.vj = p.share;
             msg_j.msg_id = msgs.msg_B2.size();
             // generate kj 
@@ -161,8 +168,7 @@ VWSS::Msg VWSS::share() const {
             
             NTL::ZZ Deltaj = bar_s_minus_bar_v - p.modulus * bar_kj;
             msgs.msg_B2.push_back(msg_j);
-            hash_list.push_back(hash::hashConcat(c_kj.c_x, c_bar_kj.c_x, Deltaj));
-
+            hash_list.push_back(hash::hashConcat(c_kj.c_x, c_bar_kj.c_x, Deltaj, p.share, msg_j.rho));
             pending_B2.push_back({msgs.msg_B2.size() - 1, kj, bar_kj, c_kj, c_bar_kj, hash_list.size() - 1});
         }
         
@@ -337,7 +343,7 @@ bool VWSS::verify_party_in_B1(const MSG_B1& msg, const NTL::ZZ& lambda_j, const 
     // compute Delta_j' = (R_s - R_v - gamma * lambda_j * v_j) mod p_j
     NTL::ZZ Delta_j_prime = ((broadcast.Rs - broadcast.Rv) - gamma_ZZ * lambda_j * msg.vj) % modulus;
 
-    hash::Hash leaf = hash::hash(Delta_j_prime);
+    hash::Hash leaf = hash::hashConcat(Delta_j_prime, msg.vj, msg.rho);
     hash::Hash recomputed_root = hash::MerkleTree::verify(leaf, msg.pathj);
 
     return (recomputed_root == broadcast.rt);
@@ -358,7 +364,7 @@ bool VWSS::verify_party_in_B2(const MSG_B2& msg, const NTL::ZZ& lambda_j, const 
     // compute Delta_j_prime = R_s - R_v - gamma * lambda_j v_j - p_j R_kj
     NTL::ZZ Delta_j_prime = (broadcast.Rs - broadcast.Rv) - gamma_ZZ * lambda_j * msg.vj - modulus * msg.Rkj;
 
-    hash::Hash leaf = hash::hashConcat(msg.ckj, bar_c_k_j_prime, Delta_j_prime);
+    hash::Hash leaf = hash::hashConcat(msg.ckj, bar_c_k_j_prime, Delta_j_prime, msg.vj, msg.rho);
     hash::Hash recomputed_root = hash::MerkleTree::verify(leaf, msg.pathj);
 
     return (recomputed_root == broadcast.rt);

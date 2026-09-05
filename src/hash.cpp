@@ -130,13 +130,24 @@ Hash hashConcat(const std::string& s, const NTL::ZZ& z, const Hash& h) {
     return hashBytes(buf);
 }
 
-Hash hashConcat(const std::string& s, const std::string& t, const NTL::ZZ& z) {
+Hash hashConcat(const NTL::ZZ& z, const NTL::ZZ& w, const unsigned char bytes[32]) {
     std::vector<unsigned char> buf;
-    buf.reserve(1 + 8 + s.size() + 1 + 8 + t.size() + 1 + 8 + static_cast<size_t>(NTL::NumBytes(z)));
+    buf.reserve(1 + 8 + static_cast<size_t>(NTL::NumBytes(z)) + 1 + 8 + static_cast<size_t>(NTL::NumBytes(w)) + 32);
+    appendZZEncoded(buf, z);
+    appendZZEncoded(buf, w);
+    buf.insert(buf.end(), bytes, bytes + 32);
+    return hashBytes(buf);
+}
+
+Hash hashConcat(const std::string& s, const std::string& t, const NTL::ZZ& z, const NTL::ZZ& w, const unsigned char bytes[32]) {
+    std::vector<unsigned char> buf;
+    buf.reserve(1 + 8 + s.size() + 1 + 8 + t.size() + 1 + 8 + static_cast<size_t>(NTL::NumBytes(z)) + 1 + 8 + static_cast<size_t>(NTL::NumBytes(w)) + 32);
 
     appendStringEncoded(buf, s);
     appendStringEncoded(buf, t);
     appendZZEncoded(buf, z);
+    appendZZEncoded(buf, w);
+    buf.insert(buf.end(), bytes, bytes + 32);
 
     return hashBytes(buf);
 }

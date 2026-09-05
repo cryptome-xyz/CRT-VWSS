@@ -132,6 +132,7 @@ int main() {
     VWSS vwss;
     // true for VWSS-method 1 
     vwss.setup_dealer_and_parties(params, true);
+    vwss.warmup();
     auto start = BenchmarkClock::now();
     VWSS::Msg msgs = vwss.share();
     auto end = BenchmarkClock::now();
@@ -240,6 +241,7 @@ int main() {
                    << " ms\n";
     }
 }
+    std::cout << "All message verifications PASSED!" << std::endl;
     pari_close();
 
     return 0;

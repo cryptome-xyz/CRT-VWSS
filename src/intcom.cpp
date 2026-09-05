@@ -202,6 +202,12 @@ std::string IntCom::h_pow(const NTL::ZZ& y) const {
     return s;
 }
 
+void IntCom::warmup(long max_bits) const {
+    const long num_windows = (max_bits + WINDOW_BITS - 1) / WINDOW_BITS;
+    ensure_window_table(g_window_, g_, num_windows);
+    ensure_window_table(h_window_, h_, num_windows);
+}
+
 void IntCom::ensure_window_table(std::vector<std::vector<GEN>>& table, GEN base, long num_windows_needed) {
     while (static_cast<long>(table.size()) < num_windows_needed) {
         pari_sp av = avma;

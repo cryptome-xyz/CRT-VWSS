@@ -35,7 +35,8 @@ Hash hash(const char* s);
 Hash hash(const Hash& h);
 
 Hash hashConcat(const std::string& s, const NTL::ZZ& z, const Hash& h);
-Hash hashConcat(const std::string& s, const std::string& t, const NTL::ZZ& z);
+Hash hashConcat(const std::string& s, const std::string& t, const NTL::ZZ& z, const NTL::ZZ& w, const unsigned char bytes[32]);
+Hash hashConcat(const NTL::ZZ& z, const NTL::ZZ& w, const unsigned char bytes[32]);
 
 Hash hashCombine(const Hash& left, const Hash& right);
 

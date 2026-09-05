@@ -9,6 +9,7 @@
 #include <set>
 #include <algorithm>
 #include <memory>
+#include <openssl/rand.h>
 class VWSS { 
 public: 
 
@@ -83,6 +84,7 @@ struct Party {
         std::size_t msg_id;
         NTL::ZZ vj;
         hash::AuthPath pathj;
+        unsigned char rho[32];
     };
 
     // Messages sent to the parties in B with weight < lambda
@@ -94,6 +96,7 @@ struct Party {
         NTL::ZZ Rrkj;
         std::string ckj;
         hash::AuthPath pathj;
+        unsigned char rho[32];
     };
 
     struct Msg {
@@ -110,6 +113,9 @@ struct Party {
 
     // on input a set of parameters, set up the dealer and parties
     void setup_dealer_and_parties(const Params& params, bool method1);
+
+    // Call after setup to precompute the fixed-base tables outside benchmark timings.
+    void warmup() const;
 
     // getters
     const Params& get_params() const;

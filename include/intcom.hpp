@@ -38,6 +38,8 @@ public:
     std::string multi_pow_mul(const std::vector<std::string>& bases, const std::vector<NTL::ZZ>& exps) const;
     std::string g_pow(const NTL::ZZ& x) const;
     std::string h_pow(const NTL::ZZ& y) const;
+    // Precompute the fixed-base g/h tables before a timed operation.
+    void warmup(long max_bits) const;
 
 private:
     static constexpr int WINDOW_BITS = 4;
